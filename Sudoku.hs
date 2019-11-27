@@ -1,6 +1,8 @@
 module Sudoku where
 
 import Test.QuickCheck
+import Data.Char
+import Data.List
 
 ------------------------------------------------------------------------------
 
@@ -9,7 +11,7 @@ type Cell = Maybe Int -- a single cell
 type Row  = [Cell]    -- a row is a list of cells
 
 data Sudoku = Sudoku [Row] 
- deriving ( Show, Eq )
+  deriving ( Show, Eq )
 
 rows :: Sudoku -> [Row]
 rows (Sudoku ms) = ms
@@ -36,21 +38,28 @@ example =
 
 -- | allBlankSudoku is a sudoku with just blanks
 allBlankSudoku :: Sudoku
-allBlankSudoku = undefined
+allBlankSudoku = Sudoku $ replicate 9 r 
+              where r = replicate 9 c 
+                    c = Nothing
+
 
 -- * A2
 
 -- | isSudoku sud checks if sud is really a valid representation of a sudoku
 -- puzzle
 isSudoku :: Sudoku -> Bool
-isSudoku = undefined
+isSudoku (Sudoku rows) = length rows == 9 && and [validRow row | row <- rows]
+
+validRow :: [Cell] -> Bool
+validRow cells = and [c == Nothing || (c < Just 10 && c > Just 0) | c <- cells]
 
 -- * A3
 
 -- | isFilled sud checks if sud is completely filled in,
 -- i.e. there are no blanks
 isFilled :: Sudoku -> Bool
-isFilled = undefined
+isFilled (Sudoku rows) = and [ and [ cell /= Nothing | cell <- row] | row <- rows]
+
 
 ------------------------------------------------------------------------------
 
@@ -59,36 +68,57 @@ isFilled = undefined
 -- | printSudoku sud prints a nice representation of the sudoku sud on
 -- the screen
 printSudoku :: Sudoku -> IO ()
-printSudoku = undefined
+printSudoku sudoku  = sequence_ [printRow r "" | r <- rs]
+                      where rs = rows sudoku
+
+printRow :: [Cell] -> String -> IO()
+printRow [] s           = putStrLn    ( s ++ "\n" )
+printRow (Just c:cs)  s = printRow cs ( s ++ [ intToDigit c ] )
+printRow (Nothing:cs) s = printRow cs ( s ++ ".")
+
 
 -- * B2
 
 -- | readSudoku file reads from the file, and either delivers it, or stops
 -- if the file did not contain a sudoku
 readSudoku :: FilePath -> IO Sudoku
-readSudoku = undefined
+readSudoku fp = do 
+        contents <- readFile fp
+        let rows       = lines contents
+        let cellRows   = [createCells row | row <- rows]
+        if isSudoku    (Sudoku cellRows) 
+          then return  (Sudoku cellRows)
+          else error   "Not a sudoku"
+
+
+createCells :: [Char]-> [Cell]
+createCells [] = []
+createCells (c:cs) | c == '.'  = [ Nothing ]             ++ createCells cs
+                    | otherwise = [ Just (digitToInt c) ] ++ createCells cs
+
+
 
 ------------------------------------------------------------------------------
 
 -- * C1
 
 -- | cell generates an arbitrary cell in a Sudoku
-cell :: Gen (Cell)
-cell = undefined
+cell :: Gen Cell
+cell = frequency [ (9, elements [ Nothing ]) , (1, elements [ Just n | n <- [1..9] ]) ]
 
 
 -- * C2
 
 -- | an instance for generating Arbitrary Sudokus
 instance Arbitrary Sudoku where
-  arbitrary = undefined
-
- -- hint: get to know the QuickCheck function vectorOf
- 
+  arbitrary = 
+    do rows <- vectorOf 9 (vectorOf 9 cell)
+       return (Sudoku rows)
+  -- hint: get to know the QuickCheck function vectorOf
+  
 -- * C3
-
 prop_Sudoku :: Sudoku -> Bool
-prop_Sudoku = undefined
+prop_Sudoku = isSudoku
   -- hint: this definition is simple!
   
 ------------------------------------------------------------------------------
@@ -99,21 +129,36 @@ type Block = [Cell] -- a Row is also a Cell
 -- * D1
 
 isOkayBlock :: Block -> Bool
-isOkayBlock = undefined
+isOkayBlock [] = True
+isOkayBlock (x:xs) 
+  | x == Nothing = isOkayBlock xs
+  | otherwise   = notElem x xs && isOkayBlock xs
 
 
 -- * D2
 
 blocks :: Sudoku -> [Block]
-blocks = undefined
+blocks (Sudoku rows') = concat [rows' , transpose rows', createBlocks rows' ]
+
+-- Helpers
+createBlocks :: [Block] -> [Block]
+createBlocks sud 
+    | any null sud = []
+    | otherwise = merge (map (take 3) sud) ++ createBlocks (map (drop 3) sud)
+
+merge :: [Block] -> [Block]
+merge blocks 
+    | not (null blocks) =  concat (take 3 blocks): merge (drop 3 blocks)
+    | otherwise = []
 
 prop_blocks_lengths :: Sudoku -> Bool
-prop_blocks_lengths = undefined
+prop_blocks_lengths s = length (blocks s) == 27 && all (\b -> length b == 9) (blocks s)
+
 
 -- * D3
 
 isOkay :: Sudoku -> Bool
-isOkay = undefined
+isOkay s = all isOkayBlock (blocks s)
 
 
 ---- Part A ends here --------------------------------------------------------
