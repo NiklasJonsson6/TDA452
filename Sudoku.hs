@@ -3,9 +3,8 @@ module Sudoku where
 import Test.QuickCheck
 import Data.Char
 import Data.List
-import Data.Maybe(isJust)
-import Data.Maybe(fromJust)
-import Data.Maybe(isNothing)
+import Data.Maybe
+import System.Random
 
 ------------------------------------------------------------------------------
 
@@ -54,7 +53,7 @@ isSudoku :: Sudoku -> Bool
 isSudoku (Sudoku rows) = length rows == 9 && all validRow rows
 
 validRow :: [Cell] -> Bool
-validRow cells = and [c == Nothing || (c < Just 10 && c > Just 0) | c <- cells]
+validRow cells = and [isNothing c || (c < Just 10 && c > Just 0) | c <- cells]
 
 -- * A3
 
@@ -75,7 +74,7 @@ printSudoku sudoku  = sequence_ (map (\r -> printRow r "") rs)
                       where rs = rows sudoku
 
 printRow :: [Cell] -> String -> IO()
-printRow [] s           = putStrLn    ( s )
+printRow [] s           = putStrLn s 
 printRow (Just c:cs)  s = printRow cs ( s ++ [ intToDigit c ] )
 printRow (Nothing:cs) s = printRow cs ( s ++ ".")
 
@@ -96,8 +95,8 @@ readSudoku fp = do
 
 createCells :: [Char] -> [Cell]
 createCells [] = []
-createCells (c:cs) | c == '.'  = [ Nothing ]             ++ createCells cs
-                    | otherwise = [ Just (digitToInt c) ] ++ createCells cs
+createCells (c:cs) | c == '.'  = Nothing : createCells cs
+                    | otherwise = Just (digitToInt c) : createCells cs
 
 
 
@@ -134,7 +133,7 @@ type Block = [Cell] -- a Row is also a Cell
 isOkayBlock :: Block -> Bool
 isOkayBlock [] = True
 isOkayBlock (x:xs) 
-  | x == Nothing = isOkayBlock xs
+  | isNothing x = isOkayBlock xs
   | otherwise   = notElem x xs && isOkayBlock xs
 
 
@@ -181,12 +180,12 @@ blanks sudoku = getBlankRows 0 rs
 
 getBlankRows:: Int -> [Row] -> [Pos]
 getBlankRows 9 _ = []
-getBlankRows i (r:rs) = (getBlankCells i 0 r) ++ (getBlankRows (i+1) rs)
+getBlankRows i (r:rs) = getBlankCells i 0 r ++ getBlankRows (i+1) rs
 
 
 getBlankCells:: Int -> Int -> Row -> [(Int,Int)]
 getBlankCells _ 9 _ = []
-getBlankCells r i xs | (xs!!i) == Nothing = [(r,i)] ++ (getBlankCells r (i+1) xs)
+getBlankCells r i xs | isNothing (xs!!i) = (r,i) : getBlankCells r (i+1) xs
                | otherwise = getBlankCells r (i+1) xs
 
 prop_blanks_allBlanks :: Sudoku -> Bool
@@ -206,17 +205,20 @@ getPosition (i,j) s |i>=0 && i<9 && j >=0 && j<9 = (rows s !! i)  !! j
 
 (!!=) :: [a] -> (Int,a) -> [a]
 []     !!=  _     = []
-(x:xs) !!= (i,y) | i<0 || i >= length (x:xs) = (x:xs)
+(x:xs) !!= (i,y) | i<0 || i >= length (x:xs) = x:xs
                  | i==0 = y:xs
-                 | otherwise = x:xs !!= ((i-1),y)
+                 | otherwise = x:xs !!= (i-1 ,y)
 
 
 
-prop_bangBangEquals_correct:: [Int] -> (Int,Int) -> Bool
-prop_bangBangEquals_correct [] (i, b) = True
-prop_bangBangEquals_correct as (i, b) = i >= length as && replacedList !! i == b && as `union` newList == as
-  where replacedList = as !!= (i,b)
-        newList = take i as ++ drop (i + 1) as
+prop_bangBangEquals_correct:: [Int] -> Int -> Bool
+prop_bangBangEquals_correct [] _ = True
+prop_bangBangEquals_correct as j = do 
+                            let g = mkStdGen 6
+                            let (i, g2) = randomR (0, length as -1) g
+                            let newas = as !!= (i,j) 
+                            let cutas = take i newas ++ drop (i + 1) newas
+                            as `union` cutas == as
 
 
 -- * E3
@@ -228,11 +230,12 @@ update (Sudoku s) (i,j) n | i>=0 && i<9 && j >=0 && j<9 = Sudoku (s !!= (i, (s!!
     --    newrow = row !!= (j,n)
 
 prop_update_updated :: Sudoku -> Cell -> Bool
-prop_update_updated s n = do 
-            x <- choose (0,8) :: Gen Int
-            y <- choose (0,8) :: Gen Int
-            let newSudoku = update s (x,y) n
-            (getPosition (x,y) newSudoku) == n
+prop_update_updated s n = do
+            let g = mkStdGen 6
+            let (i, g2) = randomR (0, 8) g
+            let (j, g3) = randomR (0, 8) g2
+            let newSudoku = update s (i,j) n
+            getPosition (i,j) newSudoku == n
          
 
 ------------------------------------------------------------------------------
@@ -244,13 +247,13 @@ solve s | solutions /= [] = Just $ head solutions
         where solutions = solve' s
 
 solve' :: Sudoku -> [Sudoku]
-solve' s | blanks s == [] = [s] 
+solve' s | null $ blanks s = [s] 
          | otherwise = concatMap solve' possibleBoards
         where b:bs = blanks s
               possibleBoards = possibleMoves b s
 
 possibleMoves :: Pos -> Sudoku -> [Sudoku]
-possibleMoves pos s = filter isOkay [(update s pos (Just n)) | n <- range]
+possibleMoves pos s = filter isOkay [update s pos (Just n) | n <- range]
     where range = [1..9]
 
 
@@ -259,11 +262,7 @@ possibleMoves pos s = filter isOkay [(update s pos (Just n)) | n <- range]
 readAndSolve :: FilePath -> IO()
 readAndSolve fp = do 
                    s <- readSudoku fp
-                   if solve s /= Nothing 
-                   then printSudoku $ fromJust $ solve s
-                   else putStrLn "Has no solution"
-        
-
+                   maybe (putStrLn "Has no solution") printSudoku (solve s)
 
 -- * F3
 
@@ -276,3 +275,6 @@ putAllBlank []     s = s
 putAllBlank (p:ps) s = putAllBlank ps (update s p Nothing)
 
 -- * F4
+
+prop_SolveSound :: Sudoku -> Property
+prop_SolveSound s = isSudoku s && isOkay s && isJust (solve s) ==> fromJust (solve s) `isSolutionOf` s
