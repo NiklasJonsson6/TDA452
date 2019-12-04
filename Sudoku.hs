@@ -3,6 +3,9 @@ module Sudoku where
 import Test.QuickCheck
 import Data.Char
 import Data.List
+import Data.Maybe(isJust)
+import Data.Maybe(fromJust)
+import Data.Maybe(isNothing)
 
 ------------------------------------------------------------------------------
 
@@ -48,7 +51,7 @@ allBlankSudoku = Sudoku $ replicate 9 r
 -- | isSudoku sud checks if sud is really a valid representation of a sudoku
 -- puzzle
 isSudoku :: Sudoku -> Bool
-isSudoku (Sudoku rows) = length rows == 9 && and [validRow row | row <- rows]
+isSudoku (Sudoku rows) = length rows == 9 && all validRow rows
 
 validRow :: [Cell] -> Bool
 validRow cells = and [c == Nothing || (c < Just 10 && c > Just 0) | c <- cells]
@@ -58,7 +61,7 @@ validRow cells = and [c == Nothing || (c < Just 10 && c > Just 0) | c <- cells]
 -- | isFilled sud checks if sud is completely filled in,
 -- i.e. there are no blanks
 isFilled :: Sudoku -> Bool
-isFilled (Sudoku rows) = and [ and [ cell /= Nothing | cell <- row] | row <- rows]
+isFilled (Sudoku rows) = all isJust (concat rows)
 
 
 ------------------------------------------------------------------------------
@@ -68,11 +71,11 @@ isFilled (Sudoku rows) = and [ and [ cell /= Nothing | cell <- row] | row <- row
 -- | printSudoku sud prints a nice representation of the sudoku sud on
 -- the screen
 printSudoku :: Sudoku -> IO ()
-printSudoku sudoku  = sequence_ [printRow r "" | r <- rs]
+printSudoku sudoku  = sequence_ (map (\r -> printRow r "") rs)
                       where rs = rows sudoku
 
 printRow :: [Cell] -> String -> IO()
-printRow [] s           = putStrLn    ( s ++ "\n" )
+printRow [] s           = putStrLn    ( s )
 printRow (Just c:cs)  s = printRow cs ( s ++ [ intToDigit c ] )
 printRow (Nothing:cs) s = printRow cs ( s ++ ".")
 
@@ -91,7 +94,7 @@ readSudoku fp = do
           else error   "Not a sudoku"
 
 
-createCells :: [Char]-> [Cell]
+createCells :: [Char] -> [Cell]
 createCells [] = []
 createCells (c:cs) | c == '.'  = [ Nothing ]             ++ createCells cs
                     | otherwise = [ Just (digitToInt c) ] ++ createCells cs
@@ -173,39 +176,103 @@ type Pos = (Int,Int)
 -- * E1
 
 blanks :: Sudoku -> [Pos]
-blanks = undefined
+blanks sudoku = getBlankRows 0 rs
+  where rs = rows sudoku
 
---prop_blanks_allBlanks :: ...
---prop_blanks_allBlanks =
+getBlankRows:: Int -> [Row] -> [Pos]
+getBlankRows 9 _ = []
+getBlankRows i (r:rs) = (getBlankCells i 0 r) ++ (getBlankRows (i+1) rs)
+
+
+getBlankCells:: Int -> Int -> Row -> [(Int,Int)]
+getBlankCells _ 9 _ = []
+getBlankCells r i xs | (xs!!i) == Nothing = [(r,i)] ++ (getBlankCells r (i+1) xs)
+               | otherwise = getBlankCells r (i+1) xs
+
+prop_blanks_allBlanks :: Sudoku -> Bool
+prop_blanks_allBlanks s = all isNothing $ cells s $ blanks s
+
+cells :: Sudoku -> [Pos] -> [Cell]
+cells s (x:xs) | null xs = [getPosition x s]
+               | otherwise = getPosition x s : cells s xs
+
+getPosition:: Pos -> Sudoku -> Cell
+getPosition (i,j) s |i>=0 && i<9 && j >=0 && j<9 = (rows s !! i)  !! j
+                    |otherwise = error "Out of bounds"
+ -- where row = rows s !! i  
 
 
 -- * E2
 
 (!!=) :: [a] -> (Int,a) -> [a]
-xs !!= (i,y) = undefined
+[]     !!=  _     = []
+(x:xs) !!= (i,y) | i<0 || i >= length (x:xs) = (x:xs)
+                 | i==0 = y:xs
+                 | otherwise = x:xs !!= ((i-1),y)
 
---prop_bangBangEquals_correct :: ...
---prop_bangBangEquals_correct =
+
+
+prop_bangBangEquals_correct:: [Int] -> (Int,Int) -> Bool
+prop_bangBangEquals_correct [] (i, b) = True
+prop_bangBangEquals_correct as (i, b) = i >= length as && replacedList !! i == b && as `union` newList == as
+  where replacedList = as !!= (i,b)
+        newList = take i as ++ drop (i + 1) as
 
 
 -- * E3
 
 update :: Sudoku -> Pos -> Cell -> Sudoku
-update = undefined
+update (Sudoku s) (i,j) n | i>=0 && i<9 && j >=0 && j<9 = Sudoku (s !!= (i, (s!!i) !!= (j,n) ))
+                          | otherwise = error "Out of bounds"
+  --where row = s!!i
+    --    newrow = row !!= (j,n)
 
---prop_update_updated :: ...
---prop_update_updated =
-
+prop_update_updated :: Sudoku -> Cell -> Bool
+prop_update_updated s n = do 
+            x <- choose (0,8) :: Gen Int
+            y <- choose (0,8) :: Gen Int
+            let newSudoku = update s (x,y) n
+            (getPosition (x,y) newSudoku) == n
+         
 
 ------------------------------------------------------------------------------
 
 -- * F1
+solve :: Sudoku -> Maybe Sudoku
+solve s | solutions /= [] = Just $ head solutions
+        | otherwise = Nothing
+        where solutions = solve' s
+
+solve' :: Sudoku -> [Sudoku]
+solve' s | blanks s == [] = [s] 
+         | otherwise = concatMap solve' possibleBoards
+        where b:bs = blanks s
+              possibleBoards = possibleMoves b s
+
+possibleMoves :: Pos -> Sudoku -> [Sudoku]
+possibleMoves pos s = filter isOkay [(update s pos (Just n)) | n <- range]
+    where range = [1..9]
 
 
 -- * F2
 
+readAndSolve :: FilePath -> IO()
+readAndSolve fp = do 
+                   s <- readSudoku fp
+                   if solve s /= Nothing 
+                   then printSudoku $ fromJust $ solve s
+                   else putStrLn "Has no solution"
+        
+
 
 -- * F3
 
+isSolutionOf :: Sudoku -> Sudoku -> Bool
+isSolutionOf s1 s2 = isOkay s1 && isFilled s1
+                    &&  putAllBlank (blanks s2) s1 == s2
+
+putAllBlank :: [Pos] -> Sudoku -> Sudoku
+putAllBlank []     s = s
+putAllBlank (p:ps) s = putAllBlank ps (update s p Nothing)
 
 -- * F4
