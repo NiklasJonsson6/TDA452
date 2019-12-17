@@ -2,6 +2,8 @@ module Expr where
     import Test.QuickCheck
     import Data.Char
     import Data.Maybe
+    import Parsing
+    import System.Random
 
     -- | An expression consists of: 
     -- | Numbers (integers of floating point)
@@ -55,4 +57,52 @@ module Expr where
     eval (Sin e) x = Prelude.sin (eval e x)
     eval (Cos e) x = Prelude.cos (eval e x)
 
-    
+    readExpr :: String -> Maybe Expr
+    readExpr s = case parse exprP (trim s) of 
+        Just (e,_) -> Just e
+        _ -> Nothing
+        where trim = filter (' ' /=)
+
+    numP,exprP,termP,factorP,varP,sinP,cosP :: Parser Expr
+    numP = Num <$> readsP 
+    exprP = foldr1 Add <$> chain termP (char '+')
+    termP = foldr1 Mul <$> chain factorP (char '*')
+    factorP = char '(' *> exprP <* char ')' <|> numP <|> varP <|> sinP <|> cosP
+    varP = char 'x' *> return Var
+    sinP = Sin <$> (char 's' *> char 'i' *> char 'n' *> factorP) 
+    cosP = Cos <$> (char 'c' *> char 'o' *> char 's' *> factorP)
+
+    prop_ShowReadExpr e = Just (assoc e) == readExpr (show e)
+
+    instance Arbitrary Expr where
+        arbitrary = sized rExpr
+
+
+    range = 4
+    rExpr :: Int -> Gen Expr
+    rExpr s = frequency [
+        (1, rNum),
+        (1, return Var),
+        (s, do a <- rExpr s'
+               b <- rExpr s'
+               return (Add a b)),
+        (s, do a <- rExpr s'
+               b <- rExpr s'
+               return (Mul a b)),
+        (s, do a <- rExpr s'
+               return (Sin a)),
+        (s, do a <- rExpr s'
+               return (Cos a))
+        ]
+        where 
+            s' = div s 2
+            rNum = elements (map Num [-range..range])
+
+    assoc :: Expr -> Expr
+    assoc (Add (Add a b) c) = assoc (Add a (Add b c))
+    assoc (Add a b)         = Add (assoc a) (assoc b)
+    assoc (Mul (Mul a b) c) = assoc (Mul a (Mul b c))
+    assoc (Mul a b)         = Mul (assoc a) (assoc b)
+    assoc (Sin a)           = Sin (assoc a)
+    assoc (Cos a)           = Cos (assoc a)
+    assoc a                 = a
